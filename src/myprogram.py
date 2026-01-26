@@ -2,19 +2,24 @@
 import os
 import string
 import random
+import pickle
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
+from collections import defaultdict, Counter
 
 class MyModel:
     """
     This is a starter model to get you started. Feel free to modify this file.
     """
 
+    def __init__(self):
+        self.N = 3 # n-gram size
+        self.ngrams = defaultdict(Counter)
+
     @classmethod
     def load_training_data(cls):
-        # your code here
-        # this particular model doesn't train
-        return []
+        # TODO: replace with real HF data
+        # For now, just dummy data
+        return ["happy new year to you", "this is test data", "how are you today?", "happy new year", "that one is mine"]
 
     @classmethod
     def load_test_data(cls, fname):
@@ -33,32 +38,42 @@ class MyModel:
                 f.write('{}\n'.format(p))
 
     def run_train(self, data, work_dir):
-        # your code here
-        pass
+        # Build up n-grams from training data
+        for line in data:
+            line = " " * self.N + line.lower()
+            for i in range(len(line) - self.N):
+                context = line[i:i+self.N]
+                next_char = line[i+self.N]
+                self.ngrams[context][next_char] += 1
 
     def run_pred(self, data):
         # your code here
         preds = []
         all_chars = string.ascii_letters
         for inp in data:
-            # this model just predicts a random character each time
-            top_guesses = [random.choice(all_chars) for _ in range(3)]
+            context = inp[-self.N:].lower()
+            counter = self.ngrams.get(context, None)
+            if counter is None or len(counter) == 0:
+                # no data for this context, just guess random chars
+                top_guesses = random.choices(all_chars, k=3)
+            else:
+                top_guesses = [char for char, _ in counter.most_common(3)]
+            
             preds.append(''.join(top_guesses))
         return preds
 
     def save(self, work_dir):
-        # your code here
-        # this particular model has nothing to save, but for demonstration purposes we will save a blank file
-        with open(os.path.join(work_dir, 'model.checkpoint'), 'wt') as f:
-            f.write('dummy save')
+        # Save the trained ngrams to a checkpoint file
+        with open(os.path.join(work_dir, 'model.checkpoint'), 'wb') as f:
+            pickle.dump(self.ngrams, f)
 
     @classmethod
     def load(cls, work_dir):
-        # your code here
-        # this particular model has nothing to load, but for demonstration purposes we will load a blank file
-        with open(os.path.join(work_dir, 'model.checkpoint')) as f:
-            dummy_save = f.read()
-        return MyModel()
+        # Load the trained ngrams from checkpoint
+        model = MyModel()
+        with open(os.path.join(work_dir, 'model.checkpoint'), 'rb') as f:
+            model.ngrams = pickle.load(f)
+        return model
 
 
 if __name__ == '__main__':
