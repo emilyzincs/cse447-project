@@ -14,6 +14,7 @@ class MyModel:
     def __init__(self):
         self.N = 3 # n-gram size
         self.ngrams = defaultdict(Counter)
+        self.PREFIX_CHAR = '|' # unlikely to show up in text
 
     @classmethod
     def load_training_data(cls):
@@ -37,10 +38,13 @@ class MyModel:
             for p in preds:
                 f.write('{}\n'.format(p))
 
+    def preprocess_for_ngram(self, data):
+        return [(self.PREFIX_CHAR * self.N) + line.lower() for line in data]
+
     def run_train(self, data, work_dir):
         # Build up n-grams from training data
+        data = self.preprocess_for_ngram(data)
         for line in data:
-            line = " " * self.N + line.lower()
             for i in range(len(line) - self.N):
                 context = line[i:i+self.N]
                 next_char = line[i+self.N]
@@ -48,18 +52,20 @@ class MyModel:
 
     def run_pred(self, data):
         # your code here
+        data = self.preprocess_for_ngram(data)
         preds = []
         all_chars = string.ascii_letters
-        for inp in data:
-            context = inp[-self.N:].lower()
-            counter = self.ngrams.get(context, None)
-            if counter is None or len(counter) == 0:
-                # no data for this context, just guess random chars
-                top_guesses = random.choices(all_chars, k=3)
-            else:
-                top_guesses = [char for char, _ in counter.most_common(3)]
+        for line in data:
+            context = line[-self.N:]
+            curr_preds = self.ngrams.get(context, Counter())
+            curr_preds = [char for char, _ in curr_preds.most_common(3)]
             
-            preds.append(''.join(top_guesses))
+            # ensure always at least 3 choices without repeats
+            if len(curr_preds) != 3:
+                random_preds = random.sample(all_chars, k=3+len(curr_preds))
+                random_preds = [pred for pred in random_preds if pred not in curr_preds]
+                curr_preds = (curr_preds + random_preds)[:3]
+            preds.append(''.join(curr_preds))
         return preds
 
     def save(self, work_dir):
