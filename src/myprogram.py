@@ -5,6 +5,8 @@ import random
 import pickle
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import defaultdict, Counter
+from ./models import WordNGramLM
+from utils import CHARS_TO_PREDICT
 
 class MyModel:
     """
@@ -12,15 +14,15 @@ class MyModel:
     """
 
     def __init__(self):
-        self.N = 3 # n-gram size
-        self.ngrams = defaultdict(Counter)
-        self.PREFIX_CHAR = '|' # unlikely to show up in text
+        self.model = WordNGramLM(3)
+
 
     @classmethod
     def load_training_data(cls):
         # TODO: replace with real HF data
         # For now, just dummy data
-        return ["happy new year to you", "this is test data", "how are you today?", "happy new year", "that one is mine"]
+        return SAMPLE_ENGLISH_DATA
+
 
     @classmethod
     def load_test_data(cls, fname):
@@ -38,33 +40,50 @@ class MyModel:
             for p in preds:
                 f.write('{}\n'.format(p))
 
-    def preprocess_for_ngram(self, data):
-        return [(self.PREFIX_CHAR * self.N) + line.lower() for line in data]
 
     def run_train(self, data, work_dir):
         # Build up n-grams from training data
-        data = self.preprocess_for_ngram(data)
-        for line in data:
-            for i in range(len(line) - self.N):
-                context = line[i:i+self.N]
-                next_char = line[i+self.N]
-                self.ngrams[context][next_char] += 1
+        self.model.fit(data)
 
     def run_pred(self, data):
         # your code here
-        data = self.preprocess_for_ngram(data)
+        data = self.model.preprocess_data(data)
         preds = []
         all_chars = string.ascii_letters
-        for line in data:
-            context = line[-self.N:]
-            curr_preds = self.ngrams.get(context, Counter())
-            curr_preds = [char for char, _ in curr_preds.most_common(3)]
+        for words in data:
+            curr_preds = []
+            if len_words >= self.model.N:
+                # For now just hardcoding since couldn't think of an elegant workaround
+                probability_new_word = (
+                    self.model.get_probability_from_list(words[-self.model.N:]) if data else 0
+                )
+                prefix = data[-1]
+                nminus1gram = data[-N:-1]
+                ngrams = self.model.vocablist if self.model.N == 1 else self.model.nminus1grams_to_ngrams[nminus1gram]
+                last_word_start = len(nminus1gram) + 1 if self.model.N != 1 else 0
+                ngrams = [
+                    ngram if (
+                        len(ngram) > last_word_start + len(prefix) and
+                        ngram[last_word_start:last_word_start + len(prefix)] == prefix
+                    ) for ngram in ngrams
+                ]
+                candidates_to_probs = defaultdict(int)
+                for ngram in ngrams:
+                    candidates_to_probs[ngram[last_word_start + len(prefix)]] += self.model.get_probability(ngram, nminus1gram)
+                candidates, probs = zip(*candidates_to_probs.items())
+                probs = np.array(probs)
+                probs /= np.sum(probs)
+                if (probability_new_word != 0):
+                    probs *= 1 - probability_new_word
+                    candidates.append(' ')
+                    probs.append(probability_new_word)
+                curr_preds = np.random.choice(candidates, size=max(len(candidates), CHARS_TO_PREDICT), replace=False, p=probs)
             
             # ensure always at least 3 choices without repeats
-            if len(curr_preds) != 3:
-                random_preds = random.sample(all_chars, k=3+len(curr_preds))
+            if len(curr_preds) != CHARS_TO_PREDICT:
+                random_preds = random.sample(all_chars, k=CHARS_TO_PREDICT+len(curr_preds))
                 random_preds = [pred for pred in random_preds if pred not in curr_preds]
-                curr_preds = (curr_preds + random_preds)[:3]
+                curr_preds = (curr_preds + random_preds)[:CHARS_TO_PREDICT]
             preds.append(''.join(curr_preds))
         return preds
 
