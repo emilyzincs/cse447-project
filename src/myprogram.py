@@ -5,6 +5,7 @@ import random
 import pickle
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import defaultdict, Counter
+from datasets import load_dataset
 
 class MyModel:
     """
@@ -17,19 +18,81 @@ class MyModel:
         self.PREFIX_CHAR = '|' # unlikely to show up in text
 
     @classmethod
-    def load_training_data(cls):
-        # TODO: replace with real HF data
-        # For now, just dummy data
-        return ["happy new year to you", "this is test data", "how are you today?", "happy new year", "that one is mine"]
+    def load_training_data(cls, languages=None, max_docs_per_lang=1000, streaming=True):
+        """
+        Load training data from HuggingFace Cohere Wikipedia dataset.
+        
+        Args:
+            languages: List of language codes to load (default: ['simple', 'russian', 'chinese_simplified'])
+            max_docs_per_lang: Maximum number of documents to load per language
+            streaming: Whether to stream the dataset (True) or download it (False)
+        
+        Returns:
+            List of text documents
+        """
+        if languages is None:
+            languages = ['simple', 'russian', 'chinese_simplified']
+        
+        data = []
+        dataset_name = "Cohere/wikipedia-2023-11-embed-multilingual-v3" # from hf
+        
+        for lang in languages:
+            print(f"Loading {lang} from HuggingFace dataset...")
+            try:
+                docs_stream = load_dataset(
+                    dataset_name,
+                    lang,
+                    split="train",
+                    streaming=streaming
+                )
+                
+                for doc in docs_stream:
+                    # Extract text from the document
+                    text = doc.get('text', '')
+                    if text:
+                        data.append(text)
+                    
+                    if len(data) >= max_docs_per_lang * len(languages):
+                        break
+                
+                print(f"Loaded {len(data)} total documents so far")
+            except Exception as e:
+                print(f"Warning: Could not load {lang}: {e}")
+        
+        print(f"Total documents loaded: {len(data)}")
+        return data
 
     @classmethod
-    def load_test_data(cls, fname):
-        # your code here
+    def load_test_data(cls, fname, min_length=1):
+        """
+        Load test data from file.
+        
+        Args:
+            fname: Path to test data file
+            min_length: Minimum length of text to include (filters very short lines)
+        
+        Returns:
+            List of text samples
+        """
         data = []
-        with open(fname) as f:
-            for line in f:
-                inp = line[:-1]  # the last character is a newline
-                data.append(inp)
+        try:
+            with open(fname, 'r', encoding='utf-8') as f:
+                for line in f:
+                    # Strip whitespace and newlines
+                    inp = line.strip()
+                    
+                    # Skip empty lines
+                    if len(inp) >= min_length:
+                        data.append(inp)
+            
+            print(f"Loaded {len(data)} test samples from {fname}")
+        except FileNotFoundError:
+            print(f"Error: Test file {fname} not found")
+            return []
+        except Exception as e:
+            print(f"Error reading test file: {e}")
+            return []
+        
         return data
 
     @classmethod
@@ -88,6 +151,11 @@ if __name__ == '__main__':
     parser.add_argument('--work_dir', help='where to save', default='work')
     parser.add_argument('--test_data', help='path to test data', default='example/input.txt')
     parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
+    parser.add_argument('--languages', nargs='+', help='languages to load from HF dataset', 
+                        default=['simple', 'ru', 'zh'])
+    parser.add_argument('--max_docs', type=int, help='max documents per language', default=1000)
+    parser.add_argument('--stream', action='store_true', help='stream dataset instead of downloading', 
+                        default=True)
     args = parser.parse_args()
 
     random.seed(0)
@@ -96,10 +164,14 @@ if __name__ == '__main__':
         if not os.path.isdir(args.work_dir):
             print('Making working directory {}'.format(args.work_dir))
             os.makedirs(args.work_dir)
-        print('Instatiating model')
+        print('Instantiating model')
         model = MyModel()
-        print('Loading training data')
-        train_data = MyModel.load_training_data()
+        print('Loading training data from HuggingFace dataset')
+        train_data = MyModel.load_training_data(
+            languages=args.languages,
+            max_docs_per_lang=args.max_docs,
+            streaming=args.stream
+        )
         print('Training')
         model.run_train(train_data, args.work_dir)
         print('Saving model')
