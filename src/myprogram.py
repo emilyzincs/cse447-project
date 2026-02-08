@@ -3,9 +3,12 @@ import os
 import string
 import random
 import pickle
+import sys
+import warnings
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import defaultdict, Counter
 from datasets import load_dataset
+from itertools import islice
 
 class MyModel:
     """
@@ -18,7 +21,7 @@ class MyModel:
         self.PREFIX_CHAR = '|' # unlikely to show up in text
 
     @classmethod
-    def load_training_data(cls, languages=None, max_docs_per_lang=1000, streaming=True):
+    def load_training_data(cls, languages, max_docs_per_lang, streaming):
         """
         Load training data from HuggingFace Cohere Wikipedia dataset.
         
@@ -31,12 +34,13 @@ class MyModel:
             List of text documents
         """
         if languages is None:
-            languages = ['simple', 'russian', 'chinese_simplified']
+            languages = ['simple', 'ru', 'zh']
         
         data = []
         dataset_name = "Cohere/wikipedia-2023-11-embed-multilingual-v3" # from hf
         
         for lang in languages:
+            docs_loaded = 0
             print(f"Loading {lang} from HuggingFace dataset...")
             try:
                 docs_stream = load_dataset(
@@ -46,16 +50,17 @@ class MyModel:
                     streaming=streaming
                 )
                 
-                for doc in docs_stream:
+                for doc in islice(docs_stream, max_docs_per_lang):
                     # Extract text from the document
                     text = doc.get('text', '')
                     if text:
                         data.append(text)
-                    
-                    if len(data) >= max_docs_per_lang * len(languages):
+                        docs_loaded += 1
+                        if len(data) % 500 == 0:
+                            print(f"Loaded {len(data)} total documents so far") 
+                    if docs_loaded >= max_docs_per_lang:
                         break
-                
-                print(f"Loaded {len(data)} total documents so far")
+
             except Exception as e:
                 print(f"Warning: Could not load {lang}: {e}")
         
@@ -63,36 +68,13 @@ class MyModel:
         return data
 
     @classmethod
-    def load_test_data(cls, fname, min_length=1):
-        """
-        Load test data from file.
-        
-        Args:
-            fname: Path to test data file
-            min_length: Minimum length of text to include (filters very short lines)
-        
-        Returns:
-            List of text samples
-        """
+    def load_test_data(cls, fname):
+        # your code here
         data = []
-        try:
-            with open(fname, 'r', encoding='utf-8') as f:
-                for line in f:
-                    # Strip whitespace and newlines
-                    inp = line.strip()
-                    
-                    # Skip empty lines
-                    if len(inp) >= min_length:
-                        data.append(inp)
-            
-            print(f"Loaded {len(data)} test samples from {fname}")
-        except FileNotFoundError:
-            print(f"Error: Test file {fname} not found")
-            return []
-        except Exception as e:
-            print(f"Error reading test file: {e}")
-            return []
-        
+        with open(fname) as f:
+            for line in f:
+                inp = line[:-1]  # the last character is a newline
+                data.append(inp)
         return data
 
     @classmethod
@@ -115,13 +97,16 @@ class MyModel:
 
     def run_pred(self, data):
         # your code here
+        print("num data: ", len(data))
         data = self.preprocess_for_ngram(data)
         preds = []
         all_chars = string.ascii_letters
         for line in data:
-            context = line[-self.N:]
-            curr_preds = self.ngrams.get(context, Counter())
-            curr_preds = [char for char, _ in curr_preds.most_common(3)]
+            curr_preds = []
+            if len(line) >= self.N:
+                context = line[-self.N:]
+                curr_preds = self.ngrams.get(context, Counter())
+                curr_preds = [char for char, _ in curr_preds.most_common(3)]
             
             # ensure always at least 3 choices without repeats
             if len(curr_preds) != 3:
@@ -134,7 +119,10 @@ class MyModel:
     def save(self, work_dir):
         # Save the trained ngrams to a checkpoint file
         with open(os.path.join(work_dir, 'model.checkpoint'), 'wb') as f:
+            size = sys.getsizeof(pickle.dumps(self.ngrams))
+            print(f"Approximate pickle size: {size / 1e6:.2f} MB")
             pickle.dump(self.ngrams, f)
+        print("done!!!!", flush=True)
 
     @classmethod
     def load(cls, work_dir):
@@ -152,7 +140,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_data', help='path to test data', default='example/input.txt')
     parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
     parser.add_argument('--languages', nargs='+', help='languages to load from HF dataset', 
-                        default=['simple', 'ru', 'zh'])
+                        default=['en', 'ru', 'zh'])
     parser.add_argument('--max_docs', type=int, help='max documents per language', default=1000)
     parser.add_argument('--stream', action='store_true', help='stream dataset instead of downloading', 
                         default=True)
@@ -170,12 +158,13 @@ if __name__ == '__main__':
         train_data = MyModel.load_training_data(
             languages=args.languages,
             max_docs_per_lang=args.max_docs,
-            streaming=args.stream
+            streaming=args.stream,
         )
         print('Training')
         model.run_train(train_data, args.work_dir)
         print('Saving model')
         model.save(args.work_dir)
+        os._exit(0)
     elif args.mode == 'test':
         print('Loading model')
         model = MyModel.load(args.work_dir)
