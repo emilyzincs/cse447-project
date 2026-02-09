@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 import os
-import string
+import sys
 import random
 import pickle
-import sys
-import warnings
+import traceback
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import defaultdict, Counter
 from datasets import load_dataset
 from itertools import islice
+from utils import *
 
 class MyModel:
     """
@@ -32,10 +32,7 @@ class MyModel:
         
         Returns:
             List of text documents
-        """
-        if languages is None:
-            languages = ['simple', 'ru', 'zh']
-        
+        """        
         data = []
         dataset_name = "Cohere/wikipedia-2023-11-embed-multilingual-v3" # from hf
         
@@ -56,7 +53,7 @@ class MyModel:
                     if text:
                         data.append(text)
                         docs_loaded += 1
-                        if len(data) % 500 == 0:
+                        if len(data) % 5000 == 0:
                             print(f"Loaded {len(data)} total documents so far") 
                     if docs_loaded >= max_docs_per_lang:
                         break
@@ -73,7 +70,8 @@ class MyModel:
         data = []
         with open(fname) as f:
             for line in f:
-                inp = line[:-1]  # the last character is a newline
+                if len(line) > 0:
+                    inp = line[:-1]  # the last character is a newline
                 data.append(inp)
         return data
 
@@ -83,12 +81,16 @@ class MyModel:
             for p in preds:
                 f.write('{}\n'.format(p))
 
-    def preprocess_for_ngram(self, data):
-        return [(self.PREFIX_CHAR * self.N) + line.lower() for line in data]
+    def preprocess_data(self, data):
+        return [self.preprocess_line(line) for line in data]
+    
+    def preprocess_line(self, line):
+        return (self.PREFIX_CHAR * self.N) + line.lower()
+        
 
     def run_train(self, data, work_dir):
         # Build up n-grams from training data
-        data = self.preprocess_for_ngram(data)
+        data = self.preprocess_data(data)
         for line in data:
             for i in range(len(line) - self.N):
                 context = line[i:i+self.N]
@@ -97,23 +99,38 @@ class MyModel:
 
     def run_pred(self, data):
         # your code here
-        print("num data: ", len(data))
-        data = self.preprocess_for_ngram(data)
         preds = []
         all_chars = string.ascii_letters
-        for line in data:
+        print("num data: ", len(data))        
+        for i,unprocessed_line in enumerate(data):
             curr_preds = []
-            if len(line) >= self.N:
-                context = line[-self.N:]
-                curr_preds = self.ngrams.get(context, Counter())
-                curr_preds = [char for char, _ in curr_preds.most_common(3)]
-            
-            # ensure always at least 3 choices without repeats
-            if len(curr_preds) != 3:
-                random_preds = random.sample(all_chars, k=3+len(curr_preds))
-                random_preds = [pred for pred in random_preds if pred not in curr_preds]
-                curr_preds = (curr_preds + random_preds)[:3]
-            preds.append(''.join(curr_preds))
+            try:
+                line = self.preprocess_line(unprocessed_line)
+                if len(line) >= self.N:
+                    context = line[-self.N:]
+                    curr_preds = self.ngrams.get(context, Counter())
+                    curr_preds = [char for char, _ in curr_preds.most_common(3)]
+            except Exception as e:
+                print(f"Exception at line {i} of pred data:")
+                print(e)
+                traceback.print_exc()
+            finally:
+                # ensure always at least 3 choices without repeats
+                if len(curr_preds) != 3:
+                    lang = get_last_lang(unprocessed_line)
+                    all_chars = None
+                    if lang == ENG:
+                        all_chars = ENG_CHARS
+                    elif lang == RUS:
+                        all_chars = RUS_CHARS
+                    elif lang == CHI:
+                        all_chars = CHI_CHARS
+                    else:
+                        all_chars = ENG_CHARS # just use latin characters as default for UNK langs
+                    random_preds = random.sample(all_chars, k=CHARS_TO_PREDICT+len(curr_preds))
+                    random_preds = [pred for pred in random_preds if pred not in curr_preds]
+                    curr_preds = (curr_preds + random_preds)[:CHARS_TO_PREDICT]
+                preds.append(''.join(curr_preds))
         return preds
 
     def save(self, work_dir):
@@ -122,7 +139,6 @@ class MyModel:
             size = sys.getsizeof(pickle.dumps(self.ngrams))
             print(f"Approximate pickle size: {size / 1e6:.2f} MB")
             pickle.dump(self.ngrams, f)
-        print("done!!!!", flush=True)
 
     @classmethod
     def load(cls, work_dir):
@@ -141,7 +157,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
     parser.add_argument('--languages', nargs='+', help='languages to load from HF dataset', 
                         default=['en', 'ru', 'zh'])
-    parser.add_argument('--max_docs', type=int, help='max documents per language', default=1000)
+    parser.add_argument('--max_docs', type=int, help='max documents per language', default=100000)
     parser.add_argument('--stream', action='store_true', help='stream dataset instead of downloading', 
                         default=True)
     args = parser.parse_args()
