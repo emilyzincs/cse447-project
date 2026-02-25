@@ -157,7 +157,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
     parser.add_argument('--languages', nargs='+', help='languages to load from HF dataset', 
                         default=['en', 'ru', 'zh'])
-    parser.add_argument('--max_docs', type=int, help='max documents per language', default=100000)
+    parser.add_argument('--max_docs', type=int, help='max documents per language', default=100)
     parser.add_argument('--stream', action='store_true', help='stream dataset instead of downloading', 
                         default=True)
     args = parser.parse_args()
@@ -180,7 +180,7 @@ if __name__ == '__main__':
         model.run_train(train_data, args.work_dir)
         print('Saving model')
         model.save(args.work_dir)
-        os._exit(0)
+        # os._exit(0)
     elif args.mode == 'test':
         print('Loading model')
         model = MyModel.load(args.work_dir)
