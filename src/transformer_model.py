@@ -45,17 +45,23 @@ class CharTransformer(nn.Module):
 
         self.fc_out = nn.Linear(d_model, vocab_size)
 
+        # Precompute mask
+        self.register_buffer(
+            "mask",
+            torch.triu(torch.ones(max_len, max_len), diagonal=1)
+        )
+
     def forward(self, x):
         B, T = x.shape
         positions = torch.arange(T, device=x.device).unsqueeze(0)
 
         x = self.embed(x) + self.pos_embed(positions)
 
-        # causal mask
-        mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1)
+        mask = self.mask[:T, :T]
         mask = mask.masked_fill(mask == 1, float('-inf'))
 
-        out = self.transformer(x, mask)
+        padding_mask = (x == self.pad_idx)
+        out = self.transformer(x, mask=mask, src_key_padding_mask=padding_mask)
         logits = self.fc_out(out)
         return logits
 
@@ -200,10 +206,12 @@ class TransformerModel:
 
                 with torch.no_grad():
                     preds_top1 = logits.argmax(dim=-1)
-                    acc_top1 = (preds_top1 == y_tensor).float().mean().item()
+                    mask_valid = y_tensor != self.pad_idx
+                    correct = (preds_top1 == y_tensor) & mask_valid
+                    acc_top1 = correct.sum().float() / mask_valid.sum().float() if mask_valid.sum() > 0 else 0.0
                     topk = torch.topk(logits, 3, dim=-1).indices
                     target_exp = y_tensor.unsqueeze(-1).expand_as(topk)
-                    in_top3 = (topk == target_exp).any(dim=-1).float().mean().item()
+                    in_top3 = ((topk == target_exp) & mask_valid.unsqueeze(-1)).any(dim=-1).float().mean().item()
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -294,7 +302,7 @@ class TransformerModel:
         preds = []
 
         for line in data:
-            text = (self.PREFIX_CHAR * 3) + line.lower()
+            text = (self.PREFIX_CHAR * 3) + line
             encoded = self.encode(text)
 
             encoded = encoded[-self.max_len:]
@@ -317,7 +325,7 @@ class TransformerModel:
         return preds
 
     def save(self, work_dir):
-
+        print("Saving model to:", os.path.abspath(os.path.join(work_dir, "model.pt")))
         torch.save({
             "model_state": self.model.state_dict(),
             "char2idx": self.char2idx,
