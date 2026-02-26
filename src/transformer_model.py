@@ -26,7 +26,7 @@ class CharTransformer(nn.Module):
 
     Layers: character embedding, positional embedding, transformer encoder, output linear layer.
     """
-    def __init__(self, vocab_size, d_model=128, nhead=4, num_layers=2, max_len=512):
+    def __init__(self, vocab_size, pad_idx, d_model=128, nhead=4, num_layers=2, max_len=512):
         super().__init__()
 
         self.embed = nn.Embedding(vocab_size, d_model)
@@ -44,6 +44,7 @@ class CharTransformer(nn.Module):
         )
 
         self.fc_out = nn.Linear(d_model, vocab_size)
+        self.pad_idx = pad_idx
 
         # Precompute mask
         self.register_buffer(
@@ -52,18 +53,26 @@ class CharTransformer(nn.Module):
         )
 
     def forward(self, x):
-        B, T = x.shape
-        positions = torch.arange(T, device=x.device).unsqueeze(0)
+      B, T = x.shape
+      positions = torch.arange(T, device=x.device).unsqueeze(0)
 
-        x = self.embed(x) + self.pos_embed(positions)
+      x_embed = self.embed(x) + self.pos_embed(positions)
 
-        mask = self.mask[:T, :T]
-        mask = mask.masked_fill(mask == 1, float('-inf'))
+      causal_mask = torch.triu(
+          torch.ones(T, T, device=x.device),
+          diagonal=1
+      ).bool()
 
-        padding_mask = (x == self.pad_idx)
-        out = self.transformer(x, mask=mask, src_key_padding_mask=padding_mask)
-        logits = self.fc_out(out)
-        return logits
+      padding_mask = (x == self.pad_idx)
+
+      out = self.transformer(
+          x_embed,
+          mask=causal_mask,
+          src_key_padding_mask=padding_mask
+      )
+
+      logits = self.fc_out(out)
+      return logits
 
 
 class TransformerModel:
@@ -151,12 +160,13 @@ class TransformerModel:
         vocab_size = len(self.char2idx)
 
         self.model = CharTransformer(
-            vocab_size,
-            d_model=getattr(self, 'd_model', 128),
-            nhead=getattr(self, 'nhead', 4),
-            num_layers=getattr(self, 'num_layers', 2),
-            max_len=getattr(self, 'max_len', 256)
-        ).to(DEVICE)
+          vocab_size,
+          self.pad_idx,
+          d_model=getattr(self, 'd_model', 128),
+          nhead=getattr(self, 'nhead', 4),
+          num_layers=getattr(self, 'num_layers', 2),
+          max_len=getattr(self, 'max_len', 256)
+      ).to(DEVICE)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-4)
 
         batch_size = getattr(self, 'batch_size', 32)
@@ -347,7 +357,14 @@ class TransformerModel:
         nhead = checkpoint.get("nhead", 4)
         num_layers = checkpoint.get("num_layers", 2)
         max_len = checkpoint.get("max_len", 256)
-        model.model = CharTransformer(vocab_size, d_model=d_model, nhead=nhead, num_layers=num_layers, max_len=max_len).to(DEVICE)
+        model.model = CharTransformer(
+            vocab_size,
+            model.char2idx[model.PAD_CHAR],
+            d_model=d_model,
+            nhead=nhead,
+            num_layers=num_layers,
+            max_len=max_len
+        ).to(DEVICE)
         model.model.load_state_dict(checkpoint["model_state"])
         model.model.eval()
         model.d_model = d_model
