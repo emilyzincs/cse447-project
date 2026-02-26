@@ -58,10 +58,7 @@ class CharTransformer(nn.Module):
 
       x_embed = self.embed(x) + self.pos_embed(positions)
 
-      causal_mask = torch.triu(
-          torch.ones(T, T, device=x.device),
-          diagonal=1
-      ).bool()
+      causal_mask = self.mask[:T, :T].bool()
 
       padding_mask = (x == self.pad_idx)
 
@@ -178,16 +175,15 @@ class TransformerModel:
         top1_accs = []
         top3_accs = []
 
-        # Prepare dataset
+        # Prepare dataset, chunk each document into many max_len segments
         encoded_data = []
         for line in data:
             text = (self.PREFIX_CHAR * 3) + line
             encoded = self.encode(text)
-            if len(encoded) > self.max_len:
-                encoded = encoded[:self.max_len]
-            if len(encoded) < 2:
-                continue
-            encoded_data.append(encoded)
+            for i in range(0, len(encoded) - 1, self.max_len):
+                chunk = encoded[i:i + self.max_len]
+                if len(chunk) > 1:
+                    encoded_data.append(chunk)
 
         for epoch in range(epochs):
             random.shuffle(encoded_data)
@@ -228,20 +224,18 @@ class TransformerModel:
                 optimizer.step()
 
                 losses.append(loss.item())
-                top1_accs.append(acc_top1)
-                top3_accs.append(in_top3)
+                top1_accs.append(acc_top1.item())
+                top3_accs.append(in_top3.item())
 
                 if (batch_start // batch_size + 1) % 10 == 0:
                     pbar.set_postfix({"loss": f"{loss.item():.4f}", "top1": f"{acc_top1:.4f}", "top3": f"{in_top3:.4f}"})
 
         print("Training complete")
 
-
         # Summary metrics
         if len(losses) > 0:
             final_loss = losses[-1]
             mean_loss = float(np.mean(losses))
-            # Convert tensors to float (CPU) for numpy
             top1_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top1_accs]
             top3_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top3_accs]
             final_top1 = top1_accs_np[-1]
