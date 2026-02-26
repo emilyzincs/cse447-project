@@ -174,6 +174,9 @@ class TransformerModel:
         losses = []
         top1_accs = []
         top3_accs = []
+        val_losses_all = []
+        val_top1s_all = []
+        val_top3s_all = []
 
         # Prepare dataset, chunk each document into many max_len segments
         encoded_data = []
@@ -185,12 +188,57 @@ class TransformerModel:
                 if len(chunk) > 1:
                     encoded_data.append(chunk)
 
+        # Split into train/val
+        split_idx = int(0.9 * len(encoded_data))
+        train_data = encoded_data[:split_idx]
+        val_data = encoded_data[split_idx:]
+
+        def eval_batches(data_batches):
+            self.model.eval()
+            val_losses = []
+            val_top1s = []
+            val_top3s = []
+            with torch.no_grad():
+                for batch_start in range(0, len(data_batches), batch_size):
+                    batch = data_batches[batch_start:batch_start+batch_size]
+                    if not batch:
+                        continue
+                    x_list, y_list = [], []
+                    for encoded in batch:
+                        x_list.append(encoded[:-1])
+                        y_list.append(encoded[1:])
+                    max_seq = max(len(x) for x in x_list)
+                    B = len(x_list)
+                    x_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
+                    y_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
+                    for i, (x, y) in enumerate(zip(x_list, y_list)):
+                        x_tensor[i, :len(x)] = torch.tensor(x)
+                        y_tensor[i, :len(y)] = torch.tensor(y)
+                    logits = self.model(x_tensor)
+                    loss = F.cross_entropy(
+                        logits.view(-1, vocab_size),
+                        y_tensor.view(-1),
+                        ignore_index=self.pad_idx
+                    )
+                    preds_top1 = logits.argmax(dim=-1)
+                    mask_valid = y_tensor != self.pad_idx
+                    correct = (preds_top1 == y_tensor) & mask_valid
+                    acc_top1 = correct.sum().float() / mask_valid.sum().float() if mask_valid.sum() > 0 else 0.0
+                    topk = torch.topk(logits, 3, dim=-1).indices
+                    target_exp = y_tensor.unsqueeze(-1).expand_as(topk)
+                    in_top3 = ((topk == target_exp) & mask_valid.unsqueeze(-1)).any(dim=-1).float().mean().item()
+                    val_losses.append(loss.item())
+                    val_top1s.append(acc_top1.item())
+                    val_top3s.append(in_top3 if isinstance(in_top3, float) else in_top3.item())
+            self.model.train()
+            return val_losses, val_top1s, val_top3s
+
         for epoch in range(epochs):
-            random.shuffle(encoded_data)
-            num_batches = (len(encoded_data) + batch_size - 1) // batch_size
-            pbar = tqdm(range(0, len(encoded_data), batch_size), desc=f"Epoch {epoch+1}/{epochs}", unit="batch")
+            random.shuffle(train_data)
+            num_batches = (len(train_data) + batch_size - 1) // batch_size
+            pbar = tqdm(range(0, len(train_data), batch_size), desc=f"Epoch {epoch+1}/{epochs}", unit="batch")
             for batch_start in pbar:
-                batch = encoded_data[batch_start:batch_start+batch_size]
+                batch = train_data[batch_start:batch_start+batch_size]
                 x_list, y_list = [], []
                 for encoded in batch:
                     x_list.append(encoded[:-1])
@@ -225,10 +273,16 @@ class TransformerModel:
 
                 losses.append(loss.item())
                 top1_accs.append(acc_top1.item())
-                top3_accs.append(in_top3.item())
+                top3_accs.append(in_top3 if isinstance(in_top3, float) else in_top3.item())
 
                 if (batch_start // batch_size + 1) % 10 == 0:
                     pbar.set_postfix({"loss": f"{loss.item():.4f}", "top1": f"{acc_top1:.4f}", "top3": f"{in_top3:.4f}"})
+
+            # Validation after each epoch
+            val_losses, val_top1s, val_top3s = eval_batches(val_data)
+            val_losses_all.extend(val_losses)
+            val_top1s_all.extend(val_top1s)
+            val_top3s_all.extend(val_top3s)
 
         print("Training complete")
 
@@ -236,12 +290,10 @@ class TransformerModel:
         if len(losses) > 0:
             final_loss = losses[-1]
             mean_loss = float(np.mean(losses))
-            top1_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top1_accs]
-            top3_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top3_accs]
-            final_top1 = top1_accs_np[-1]
-            mean_top1 = float(np.mean(top1_accs_np))
-            final_top3 = top3_accs_np[-1]
-            mean_top3 = float(np.mean(top3_accs_np))
+            final_top1 = top1_accs[-1]
+            mean_top1 = float(np.mean(top1_accs))
+            final_top3 = top3_accs[-1]
+            mean_top3 = float(np.mean(top3_accs))
 
             print("Training summary metrics:")
             print(f"  Final loss: {final_loss:.4f}")
@@ -256,10 +308,12 @@ class TransformerModel:
                 os.makedirs(work_dir, exist_ok=True)
 
                 plt.figure()
-                plt.plot(losses, label='loss')
+                plt.plot(losses, label='train loss')
+                if val_losses_all:
+                    plt.plot(np.linspace(0, len(losses), len(val_losses_all)), val_losses_all, label='val loss')
                 plt.xlabel('step')
                 plt.ylabel('loss')
-                plt.title('Training Loss')
+                plt.title('Loss (Train/Val)')
                 plt.grid(True)
                 plt.legend()
                 loss_path = os.path.join(work_dir, 'loss.png')
@@ -267,11 +321,15 @@ class TransformerModel:
                 plt.close()
 
                 plt.figure()
-                plt.plot(top1_accs, label='top1')
-                plt.plot(top3_accs, label='top3')
+                plt.plot(top1_accs, label='train top1')
+                plt.plot(top3_accs, label='train top3')
+                if val_top1s_all:
+                    plt.plot(np.linspace(0, len(top1_accs), len(val_top1s_all)), val_top1s_all, label='val top1')
+                if val_top3s_all:
+                    plt.plot(np.linspace(0, len(top3_accs), len(val_top3s_all)), val_top3s_all, label='val top3')
                 plt.xlabel('step')
                 plt.ylabel('accuracy')
-                plt.title('Training Accuracy')
+                plt.title('Accuracy (Train/Val)')
                 plt.grid(True)
                 plt.legend()
                 acc_path = os.path.join(work_dir, 'accuracy.png')
