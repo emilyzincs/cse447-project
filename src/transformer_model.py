@@ -29,9 +29,11 @@ class CharTransformer(nn.Module):
     def __init__(self, vocab_size, pad_idx, d_model=128, nhead=4, num_layers=2, max_len=512):
         super().__init__()
 
+        # maps each character index to a d_model-dim vector
         self.embed = nn.Embedding(vocab_size, d_model)
+        # maps positions, allows for learning positional info
         self.pos_embed = nn.Embedding(max_len, d_model)
-
+        # transformer encoder layers, with self-attention and feedforward
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -42,11 +44,11 @@ class CharTransformer(nn.Module):
             encoder_layer,
             num_layers=num_layers
         )
-
+        # output, maps back to vocab size for prediction
         self.fc_out = nn.Linear(d_model, vocab_size)
         self.pad_idx = pad_idx
 
-        # Precompute mask
+        # Precompute mask for attention
         self.register_buffer(
             "mask",
             torch.triu(torch.ones(max_len, max_len), diagonal=1)
