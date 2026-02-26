@@ -236,14 +236,18 @@ class TransformerModel:
 
         print("Training complete")
 
+
         # Summary metrics
         if len(losses) > 0:
             final_loss = losses[-1]
             mean_loss = float(np.mean(losses))
-            final_top1 = top1_accs[-1]
-            mean_top1 = float(np.mean(top1_accs))
-            final_top3 = top3_accs[-1]
-            mean_top3 = float(np.mean(top3_accs))
+            # Convert tensors to float (CPU) for numpy
+            top1_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top1_accs]
+            top3_accs_np = [float(a.cpu() if hasattr(a, 'cpu') else a) for a in top3_accs]
+            final_top1 = top1_accs_np[-1]
+            mean_top1 = float(np.mean(top1_accs_np))
+            final_top3 = top3_accs_np[-1]
+            mean_top3 = float(np.mean(top3_accs_np))
 
             print("Training summary metrics:")
             print(f"  Final loss: {final_loss:.4f}")
