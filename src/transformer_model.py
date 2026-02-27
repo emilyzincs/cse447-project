@@ -393,7 +393,7 @@ class TransformerModel:
         return preds
 
     def save(self, work_dir):
-        print("Saving model to:", os.path.abspath(os.path.join(work_dir, "model.pt")))
+        print("Saving model to:", os.path.abspath(os.path.join(work_dir, "model.checkpoint")))
         torch.save({
             "model_state": self.model.state_dict(),
             "char2idx": self.char2idx,
@@ -402,11 +402,11 @@ class TransformerModel:
             "nhead": getattr(self, 'nhead', 4),
             "num_layers": getattr(self, 'num_layers', 2),
             "max_len": getattr(self, 'max_len', 256)
-        }, os.path.join(work_dir, "model.pt"))
+        }, os.path.join(work_dir, "model.checkpoint"))
 
     @classmethod
     def load(cls, work_dir):
-        checkpoint = torch.load(os.path.join(work_dir, "model.pt"), map_location=DEVICE)
+        checkpoint = torch.load(os.path.join(work_dir, "model.checkpoint"), map_location=DEVICE)
         model = cls()
         model.char2idx = checkpoint["char2idx"]
         model.idx2char = checkpoint["idx2char"]
