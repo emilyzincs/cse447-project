@@ -16,16 +16,16 @@ bash grader/grade.sh ./example
 
 ```
 python src/myprogram.py train --work_dir work
-python src/myprogram.py test --work_dir work --test_data example/input2.txt --test_output mypred.txt
-python grader/grade.py mypred.txt example/answer2.txt
+python src/myprogram.py test --work_dir work --test_data example/input2.txt --test_output pred.txt
+python grader/grade.py pred.txt example/answer2.txt
 ```
 
 ## Transformer
 
 ```
 python src/transformer_model.py train --work_dir work --batch_size 128 --epochs 5 --d_model 256 --nhead 8 --num_layers 4 --max_len 100 --max_docs 20000 --languages en
-python src/transformer_model.py test --work_dir work --test_data example/input.txt --test_output transformer_pred.txt --max_len 64
-python grader/grade.py transformer_pred.txt example/answer.txt
+python src/transformer_model.py test --work_dir work --test_data example/input.txt --test_output pred.txt --max_len 64
+python grader/grade.py pred.txt example/answer.txt
 
 mkdir -p output
 docker build -t cse447-proj/demo -f Dockerfile .
