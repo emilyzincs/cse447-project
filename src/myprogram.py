@@ -137,14 +137,11 @@ class TransformerModel:
         print("Vocab size:", len(self.char2idx))
 
     def encode(self, text):
-        # Only encode characters in vocab; skip unknowns
+        # Map unknown characters to <UNK> token if present, else pad_idx
         indices = []
+        unk_idx = self.char2idx.get('<UNK>', self.pad_idx)
         for c in text:
-            if c in self.char2idx:
-                indices.append(self.char2idx[c])
-            else:
-                # Optionally warn or skip
-                pass
+            indices.append(self.char2idx.get(c, unk_idx))
         return indices
 
     def decode(self, indices):
@@ -369,27 +366,19 @@ class TransformerModel:
         device = next(self.model.parameters()).device
         preds = []
         for line in data:
-            chars = None
-            try:
-                text = (self.PREFIX_CHAR * 3) + line
-                encoded = self.encode(text)
-
-                encoded = encoded[-self.max_len:]
-
-                x = torch.tensor(encoded, device=device).unsqueeze(0)
-
-                with torch.no_grad():
-                    logits = self.model(x)
-
-                probs = F.softmax(logits[0, -1], dim=-1)
-                top3 = torch.topk(probs, 3).indices.tolist()
-                chars = [self.idx2char[idx] for idx in top3]
-
-            except Exception:
-                chars = random.sample(list(self.char2idx.keys()), 3)
-
+            text = (self.PREFIX_CHAR * 3) + line
+            encoded = self.encode(text)
+            # Ensure at least one token
+            if len(encoded) == 0:
+                encoded = [self.pad_idx]
+            encoded = encoded[-self.max_len:]
+            x = torch.tensor(encoded, device=device).unsqueeze(0)
+            with torch.no_grad():
+                logits = self.model(x)
+            probs = F.softmax(logits[0, -1], dim=-1)
+            top3 = torch.topk(probs, 3).indices.tolist()
+            chars = [self.idx2char[idx] for idx in top3]
             preds.append(''.join(chars))
-
         return preds
 
     def save(self, work_dir):
