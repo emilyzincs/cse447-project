@@ -44,6 +44,7 @@ class CharTransformer(nn.Module):
             encoder_layer,
             num_layers=num_layers
         )
+        self.d_model = d_model
         # output, maps back to vocab size for prediction
         self.fc_out = nn.Linear(d_model, vocab_size)
         self.pad_idx = pad_idx
@@ -58,7 +59,7 @@ class CharTransformer(nn.Module):
       B, T = x.shape
       positions = torch.arange(T, device=x.device).unsqueeze(0)
 
-      x_embed = self.embed(x) + self.pos_embed(positions)
+      x_embed = self.embed(x) * (self.d_model ** 0.5) + self.pos_embed(positions)
 
       causal_mask = self.mask[:T, :T].bool()
 
@@ -130,6 +131,7 @@ class TransformerModel:
                 charset.add(ch)
         charset.add(self.PREFIX_CHAR)
         charset.add(self.PAD_CHAR)
+        charset.add('<UNK>')
         charset = sorted(list(charset))
         self.char2idx = {c: i for i, c in enumerate(charset)}
         self.idx2char = {i: c for c, i in self.char2idx.items()}
@@ -137,7 +139,7 @@ class TransformerModel:
         print("Vocab size:", len(self.char2idx))
 
     def encode(self, text):
-        # Map unknown characters to <UNK> token if present, else pad_idx
+        # Map unknown characters to <UNK> token
         indices = []
         unk_idx = self.char2idx.get('<UNK>', self.pad_idx)
         for c in text:
@@ -365,20 +367,38 @@ class TransformerModel:
     def run_pred(self, data):
         device = next(self.model.parameters()).device
         preds = []
+
         for line in data:
             text = (self.PREFIX_CHAR * 3) + line
             encoded = self.encode(text)
-            # Ensure at least one token
+
             if len(encoded) == 0:
                 encoded = [self.pad_idx]
+
             encoded = encoded[-self.max_len:]
-            x = torch.tensor(encoded, device=device).unsqueeze(0)
+
+            if len(encoded) == 0:
+                encoded = [self.pad_idx]
+
+            x = torch.tensor(encoded, dtype=torch.long, device=device).unsqueeze(0)
+
             with torch.no_grad():
                 logits = self.model(x)
+
             probs = F.softmax(logits[0, -1], dim=-1)
             top3 = torch.topk(probs, 3).indices.tolist()
-            chars = [self.idx2char[idx] for idx in top3]
-            preds.append(''.join(chars))
+
+            chars = []
+            for idx in top3:
+                ch = self.idx2char[idx]
+                if ch != self.PAD_CHAR:
+                    chars.append(ch)
+
+            while len(chars) < 3:
+                chars.append(' ')
+
+            preds.append(''.join(chars[:3]))
+
         return preds
 
     def save(self, work_dir):
@@ -399,6 +419,7 @@ class TransformerModel:
         model = cls()
         model.char2idx = checkpoint["char2idx"]
         model.idx2char = checkpoint["idx2char"]
+        model.pad_idx = model.char2idx[model.PAD_CHAR]
         vocab_size = len(model.char2idx)
         d_model = checkpoint.get("d_model", 128)
         nhead = checkpoint.get("nhead", 4)
