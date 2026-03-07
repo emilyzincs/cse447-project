@@ -17,9 +17,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 class CharTransformer(nn.Module):
     """
     Character level transformer model.
@@ -151,7 +148,7 @@ class TransformerModel:
 
    
     def run_train(self, data, work_dir):
-
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Building vocab...")
         self.build_vocab(data)
 
@@ -164,7 +161,7 @@ class TransformerModel:
           nhead=getattr(self, 'nhead', 4),
           num_layers=getattr(self, 'num_layers', 2),
           max_len=getattr(self, 'max_len', 256)
-      ).to(DEVICE)
+      ).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-4)
 
         batch_size = getattr(self, 'batch_size', 32)
@@ -210,11 +207,11 @@ class TransformerModel:
                         y_list.append(encoded[1:])
                     max_seq = max(len(x) for x in x_list)
                     B = len(x_list)
-                    x_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
-                    y_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
+                    x_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(device)
+                    y_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(device)
                     for i, (x, y) in enumerate(zip(x_list, y_list)):
-                        x_tensor[i, :len(x)] = torch.tensor(x)
-                        y_tensor[i, :len(y)] = torch.tensor(y)
+                        x_tensor[i, :len(x)] = torch.tensor(x, device=device)
+                        y_tensor[i, :len(y)] = torch.tensor(y, device=device)
                     logits = self.model(x_tensor)
                     loss = F.cross_entropy(
                         logits.view(-1, vocab_size),
@@ -246,11 +243,11 @@ class TransformerModel:
                     y_list.append(encoded[1:])
                 max_seq = max(len(x) for x in x_list)
                 B = len(x_list)
-                x_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
-                y_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(DEVICE)
+                x_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(device)
+                y_tensor = torch.full((B, max_seq), self.pad_idx, dtype=torch.long).to(device)
                 for i, (x, y) in enumerate(zip(x_list, y_list)):
-                    x_tensor[i, :len(x)] = torch.tensor(x)
-                    y_tensor[i, :len(y)] = torch.tensor(y)
+                    x_tensor[i, :len(x)] = torch.tensor(x, device=device)
+                    y_tensor[i, :len(y)] = torch.tensor(y, device=device)
 
                 logits = self.model(x_tensor)
                 loss = F.cross_entropy(
@@ -365,7 +362,8 @@ class TransformerModel:
                 f.write(f"{p}\n")
 
     def run_pred(self, data):
-        device = next(self.model.parameters()).device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(device)
         preds = []
 
         for line in data:
@@ -415,7 +413,8 @@ class TransformerModel:
 
     @classmethod
     def load(cls, work_dir):
-        checkpoint = torch.load(os.path.join(work_dir, "model.checkpoint"), map_location=DEVICE)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        checkpoint = torch.load(os.path.join(work_dir, "model.checkpoint"), map_location=device)
         model = cls()
         model.char2idx = checkpoint["char2idx"]
         model.idx2char = checkpoint["idx2char"]
@@ -432,7 +431,7 @@ class TransformerModel:
             nhead=nhead,
             num_layers=num_layers,
             max_len=max_len
-        ).to(DEVICE)
+        ).to(device)
         model.model.load_state_dict(checkpoint["model_state"])
         model.model.eval()
         model.d_model = d_model
