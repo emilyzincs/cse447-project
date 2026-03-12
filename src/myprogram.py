@@ -16,6 +16,7 @@ from utils import *
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
+from string import ascii_lowercase
 
 class CharTransformer(nn.Module):
     """
@@ -367,37 +368,48 @@ class TransformerModel:
         preds = []
 
         for line in data:
-            text = (self.PREFIX_CHAR * 3) + line
-            encoded = self.encode(text)
-
-            if len(encoded) == 0:
-                encoded = [self.pad_idx]
-
-            encoded = encoded[-self.max_len:]
-
-            if len(encoded) == 0:
-                encoded = [self.pad_idx]
-
-            x = torch.tensor(encoded, dtype=torch.long, device=device).unsqueeze(0)
-
-            with torch.no_grad():
-                logits = self.model(x)
-
-            probs = F.softmax(logits[0, -1], dim=-1)
-            top3 = torch.topk(probs, 3).indices.tolist()
-
             chars = []
-            for idx in top3:
-                ch = self.idx2char[idx]
-                if ch != self.PAD_CHAR:
-                    chars.append(ch)
+            try:
+              text = (self.PREFIX_CHAR * 3) + line
+              encoded = self.encode(text)
+
+              if len(encoded) == 0:
+                  encoded = [self.pad_idx]
+
+              encoded = encoded[-self.max_len:]
+
+              if len(encoded) == 0:
+                  encoded = [self.pad_idx]
+
+              x = torch.tensor(encoded, dtype=torch.long, device=device).unsqueeze(0)
+
+              with torch.no_grad():
+                  logits = self.model(x)
+
+              probs = F.softmax(logits[0, -1], dim=-1)
+              top3 = torch.topk(probs, 3).indices.tolist()
+
+              for idx in top3:
+                  ch = self.idx2char[idx]
+                  if ch != self.PAD_CHAR and ch != self.PREFIX_CHAR and ch != '<UNK>' and ch != '\n' and ch not in chars:
+                      chars.append(ch)
+            except Exception:
+                chars = []
 
             while len(chars) < 3:
-                chars.append(' ')
+                c = self.get_guess_char()
+                if c not in chars:
+                    chars.append(c)
 
             preds.append(''.join(chars[:3]))
 
         return preds
+    
+    # Returns a character to guess. To avoid a possible infinite loop, the character must
+    # be sampled from a set of size at least three
+    def get_guess_char(self):
+        return random.choice(ascii_lowercase)
+        
 
     def save(self, work_dir):
         print("Saving model to:", os.path.abspath(os.path.join(work_dir, "model.checkpoint")))
@@ -505,7 +517,7 @@ if __name__ == '__main__':
     elif args.mode == 'test':
         print('Loading model')
         model = TransformerModel.load(args.work_dir)
-        model.max_len = args.max_len
+        # model.max_len = args.max_len
 
         print(f'Loading test data from {args.test_data}')
         test_data = TransformerModel.load_test_data(args.test_data)
