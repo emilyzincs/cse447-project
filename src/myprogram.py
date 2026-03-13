@@ -35,6 +35,7 @@ class CharTransformer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
+            dropout=0.1,
             batch_first=True
         )
 
@@ -46,6 +47,7 @@ class CharTransformer(nn.Module):
         # output, maps back to vocab size for prediction
         self.fc_out = nn.Linear(d_model, vocab_size)
         self.pad_idx = pad_idx
+        self.dropout = nn.Dropout(0.1)
 
         # Precompute mask for attention
         self.register_buffer(
@@ -58,7 +60,7 @@ class CharTransformer(nn.Module):
       positions = torch.arange(T, device=x.device).unsqueeze(0)
 
       x_embed = self.embed(x) * (self.d_model ** 0.5) + self.pos_embed(positions)
-
+      x_embed = self.dropout(x_embed)
       causal_mask = self.mask[:T, :T].bool()
 
       padding_mask = (x == self.pad_idx)
